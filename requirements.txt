@@ -1,5 +1,6 @@
 fastapi
 fastapi-mail
-pykafka
+confluent-kafka
 python-dotenv
 uvicorn
+nest_asyncio

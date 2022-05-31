@@ -1,9 +1,16 @@
 import os
-from fastapi import FastAPI, BackgroundTasks
+import asyncio
+import nest_asyncio
+from fastapi import BackgroundTasks
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from dotenv import load_dotenv
+from confluent_kafka import Consumer
+from configparser import ConfigParser
+from time import sleep
 
+nest_asyncio.apply()
 load_dotenv('.env')
+
 class Envs:
     MAIL_USERNAME = os.getenv('MAIL_USERNAME')
     MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
@@ -24,6 +31,18 @@ conf = ConnectionConfig(
     USE_CREDENTIALS=False,
     TEMPLATE_FOLDER='templates',
 )
+
+# Parse the kafka configuration.
+config_parser = ConfigParser()
+config_parser.read('kafka-config.ini')
+config = dict(config_parser['default'])
+config.update(config_parser['consumer'])
+# Create Consumer instance
+consumer = Consumer(config)
+# Subscribe to topic
+topic = "emails"
+consumer.subscribe([topic])
+
 
 async def send_email_async(subject: str, email_to: str, body: str):
     message = MessageSchema(
@@ -47,17 +66,26 @@ def send_email_background(background_tasks: BackgroundTasks, subject: str, email
     background_tasks.add_task(
        fm.send_message, message, template_name='email.html')
 
-app = FastAPI(title='How to Send Email')
+try:
+    while True:
+        print("Listening")
+        # read single message at a time
+        msg = consumer.poll(0)
 
+        if msg is None:
+            sleep(5)
+            continue
+        if msg.error():
+            print("Error reading message : {}".format(msg.error()))
+            continue
 
-@app.get('/send-email/asynchronous')
-async def send_email_asynchronous():
-    await send_email_async('Hello World','someemail@gmail.com',
-    'this is the body')
-    return 'Success'
+        key = msg.key().decode('utf-8')
+        value = msg.value().decode('utf-8')
+        print(value)
+        asyncio.run(send_email_async("new email", "someone@somewhere.com", "sdfsdfsd"))
+except Exception as ex:
+    print("Kafka Exception : {}", ex)
 
-@app.get('/send-email/backgroundtasks')
-def send_email_backgroundtasks(background_tasks: BackgroundTasks):
-    send_email_background(background_tasks, 'Hello World',   
-    'someemail@gmail.com', {'title': 'Hello World', 'body': 'hellos', 'name': 'John Doe'})
-    return 'Success'
+finally:
+    print("closing consumer")
+    consumer.close()
